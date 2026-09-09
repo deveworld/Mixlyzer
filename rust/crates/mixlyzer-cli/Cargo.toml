@@ -1,0 +1,21 @@
+[package]
+name = "mixlyzer-cli"
+description = "Command-line interface to the Mixlyzer analyzer and library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "mixlyzer"
+path = "src/main.rs"
+
+[dependencies]
+mixlyzer-core = { workspace = true }
+mixlyzer-dsp = { workspace = true }
+mixlyzer-store = { workspace = true }
+mixlyzer-export = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

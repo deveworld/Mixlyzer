@@ -1,0 +1,15 @@
+[package]
+name = "mixlyzer-store"
+description = "Mixlyzer persistence: SQLite library, feature store and schema migrations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+mixlyzer-core = { workspace = true }
+thiserror = { workspace = true }
+# `bundled` compiles SQLite from source, so the build does not depend on a
+# system libsqlite3 being present or recent enough for the pragmas we use.
+rusqlite = { version = "0.32", features = ["bundled"] }

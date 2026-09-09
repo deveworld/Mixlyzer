@@ -41,3 +41,6 @@ config.json
 # dataset file (will be splitted into separate repo.)
 annotator/
 benchmark/
+
+# Rust build artifacts
+rust/target/
