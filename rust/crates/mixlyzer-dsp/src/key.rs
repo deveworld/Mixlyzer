@@ -433,7 +433,10 @@ mod tests {
         assert!(c.frames() > 0);
         for frame in 0..c.frames() {
             let total: f64 = c.frame(frame).iter().sum();
-            assert!((total - 1.0).abs() < 1e-9, "frame {frame} summed to {total}");
+            assert!(
+                (total - 1.0).abs() < 1e-9,
+                "frame {frame} summed to {total}"
+            );
         }
     }
 
@@ -469,7 +472,11 @@ mod tests {
 
     #[test]
     fn silence_produces_flat_chroma_without_dividing_by_zero() {
-        let c = chroma(&vec![0.0f32; RATE as usize * 2], RATE, ChromaOptions::default());
+        let c = chroma(
+            &vec![0.0f32; RATE as usize * 2],
+            RATE,
+            ChromaOptions::default(),
+        );
         assert!(c.frames() > 0);
         for frame in 0..c.frames() {
             assert!(c.frame(frame).iter().all(|v| *v == 0.0));

@@ -1,16 +1,19 @@
 # Mixlyzer in Rust
 
-A reimplementation of Mixlyzer's analysis and library layer as a Rust workspace,
-plus a command-line front end. The Qt desktop application is not part of this;
-what is here is everything underneath it — decoding, the analysis pipeline,
-persistence, and Rekordbox export.
+A reimplementation of Mixlyzer as a Rust workspace: the analysis pipeline, the
+library, Rekordbox export, external deck sync, a desktop application and a
+command-line front end.
 
 ```
 mixlyzer-core     domain types and pure logic: beatgrid, key, phrases,
                   cue points, JumpCUEs, configuration
-mixlyzer-dsp      decoding and analysis: envelopes, onsets, tempo, key
+mixlyzer-dsp      decoding and analysis: envelopes, onsets, tempo, key,
+                  JumpCUE detection
 mixlyzer-store    SQLite library, feature files, schema migrations
 mixlyzer-export   Rekordbox XML
+mixlyzer-sync     following an external deck through its process memory
+mixlyzer-ui       the track views, drawn with egui
+mixlyzer-app      the desktop application
 mixlyzer-cli      the `mixlyzer` binary
 ```
 
@@ -18,7 +21,7 @@ mixlyzer-cli      the `mixlyzer` binary
 
 ```sh
 cd rust
-cargo test --workspace       # 380 tests
+cargo test --workspace       # 654 tests
 cargo build --release
 ./target/release/mixlyzer analyze /path/to/track.flac
 ```
@@ -147,8 +150,79 @@ migrate and list correctly, but its stored analysis has to be recomputed with
 
 ## Not reimplemented
 
-- The Qt user interface, its views and the waveform renderer.
-- External deck sync, which reads another process's memory through Windows APIs.
-- JumpCUE detection and phrase detection. The domain types, storage, editing
-  operations and export for both are here; the detectors themselves — a
-  self-similarity search and a pair of gradient-boosted models — are not.
+- Phrase detection. The domain types, storage, editing operations, display and
+  cue-point derivation are all here; the detector itself — a pair of
+  gradient-boosted models over beat-level acoustic features — is not, because
+  it is trained on librosa's exact feature values and a port that is merely
+  close produces plausible-looking noise rather than an obvious failure.
+- The editor's undo history and the segment reanalysis workers.
+- Audio playback. The application draws the transport and moves the playhead,
+  but nothing is sent to a sound device yet.
+
+## The desktop application
+
+`mixlyzer-ui` holds the views and the interaction rules; `mixlyzer-app` is the
+window around them. The split is deliberate: the UI crate opens no window and
+owns no event loop, so a view can be run for one frame in a test and asked what
+it painted.
+
+```sh
+cargo run --release -p mixlyzer-app                       # the window
+cargo run --release -p mixlyzer-app --example render_track -- track.flac out.png 34
+```
+
+The example analyses a file and rasterises one frame to a PNG. It needs no
+display, which is how the views are checked on a build machine.
+
+![The track view](../docs/images/track-view.png)
+
+Top to bottom: cue markers, the phrase strip, the waveform with the beat grid
+over it, the JumpCUE regions, and the key strip. The playhead carries the
+`bar.beat` readout.
+
+Every view is handed one `Viewport`, which owns the single mapping from track
+time to screen position. The Python views each recomputed that mapping from the
+timeline's fields, so the convention was restated in eight files and they did
+not entirely agree; a bar line drawn by one and a `bar.beat` label drawn by
+another could disagree by a third of a second.
+
+Two further differences worth naming. The waveform is scaled to the track's own
+loudest frame, because the envelopes hold RMS rather than peak and a track
+mastered to full scale still measures around 0.2 — drawn unscaled it fills a
+fifth of the view. And the strips are laid out in fractions of the view's
+height rather than in fixed pixel offsets, so they stay aligned when the window
+is resized.
+
+## Following an external deck
+
+`mixlyzer-sync` reads another DJ program's memory to follow what it is playing.
+The parsing, the process denylist, the deck state machine and the failure policy
+are portable and tested on any platform against an in-memory fake; the actual
+process access is a Windows backend behind a `cfg`, checked by cross-compiling.
+
+The behaviour that changes: Python disables the whole feature on the *first*
+read failure and writes `enabled=false` back to `config.json`, so a null pointer
+during a track load turns it off until the user notices and re-enables it by
+hand. Here transient failures are tolerated with a backoff, and only something
+genuinely permanent — the process is gone, or it is on the denylist — disables
+anything. Nothing rewrites the config file.
+
+Two Python bugs are fixed and pinned: the pointer read width was chosen from
+whether the *address* exceeded 2³¹ rather than from the target's bitness, which
+mis-dereferences on 64-bit targets; and UTF-16 string reads could not work at
+all, because the read stopped at the first NUL byte, which is the second byte of
+every ASCII-range UTF-16 character.
+
+## Finding JumpCUEs
+
+`mixlyzer_dsp::jumpcue_detect` finds passages that sound alike, so a DJ can jump
+between them: a beat-synchronous mel matrix, a cosine self-similarity matrix,
+peaks in the similarity-versus-lag profile, then the contiguous run at each lag.
+
+The bug worth naming is an indexing one. The matrix is decimated once a track
+passes roughly four thousand beats, to bound an O(T²) similarity matrix, but
+Python then indexes the decimated matrix with full-resolution beat numbers and
+converts columns back to time as though no decimation had happened — so on a
+long mix every cue lands somewhere it should not. Here one type owns the
+column-to-beat mapping and nothing outside it infers a beat number from a
+column.

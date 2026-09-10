@@ -8,11 +8,13 @@
 
 use mixlyzer_core::beatgrid::Beatgrid;
 use mixlyzer_core::config::AnalysisConfig;
+use mixlyzer_core::jumpcue::JumpCueGraph;
 use mixlyzer_core::key::Key;
 use mixlyzer_core::segments::{KeySegment, TempoSegment};
 
 use crate::envelope::{self, Band, Envelopes};
 use crate::error::AnalysisError;
+use crate::jumpcue_detect::{self, JumpCueOptions};
 use crate::key as key_stage;
 use crate::onset::{self, OnsetOptions};
 use crate::tempo::{self, TempoOptions};
@@ -34,6 +36,8 @@ pub struct Analysis {
     pub envelopes: Envelopes,
     /// How strongly the onsets agreed with the chosen grid, `0..=1`.
     pub beat_confidence: f64,
+    /// Regions of the track that sound alike, and the jumps between them.
+    pub jump_cues: JumpCueGraph,
 }
 
 impl Analysis {
@@ -139,6 +143,15 @@ pub fn analyze_samples(
     let key_segments = key_stage::segments_from_path(&synced, &path, duration_sec);
     let overall_key = key_stage::overall_key(&chroma);
 
+    // A track with nothing that repeats has no jump cues; that is an empty
+    // graph rather than a failure, so it never costs the rest of the analysis.
+    let jump_cues = jumpcue_detect::detect(
+        samples,
+        sample_rate,
+        beatgrid.beats(),
+        JumpCueOptions::default(),
+    )?;
+
     Ok(Analysis {
         duration_sec,
         analysis_sample_rate: sample_rate,
@@ -148,6 +161,7 @@ pub fn analyze_samples(
         overall_key,
         envelopes,
         beat_confidence,
+        jump_cues,
     })
 }
 
@@ -433,6 +447,71 @@ mod tests {
         ];
         assert_eq!(dominant_tempo(&segments), Some(128.0));
         assert_eq!(dominant_tempo(&[]), None);
+    }
+
+    /// One plucked note per beat, so the track has both a beat to find and a
+    /// spectrum that says which section is playing.
+    fn pitched_track(pitches: &[f64], beat_sec: f64) -> Vec<f32> {
+        let period = (beat_sec * f64::from(RATE)) as usize;
+        let mut samples = vec![0.0f32; pitches.len() * period];
+        for (beat, hz) in pitches.iter().enumerate() {
+            for offset in 0..period {
+                let t = offset as f64 / f64::from(RATE);
+                let decay = (-6.0 * t / beat_sec).exp();
+                let tone = (2.0 * std::f64::consts::PI * hz * t).sin() * decay;
+                let click = if offset < 64 {
+                    1.0 - offset as f64 / 64.0
+                } else {
+                    0.0
+                };
+                samples[beat * period + offset] = (0.7 * tone + 0.5 * click) as f32;
+            }
+        }
+        samples
+    }
+
+    #[test]
+    fn a_returning_section_becomes_a_pair_of_jump_cues() {
+        // Eight bars of A, eight of B, then A again, at 120 BPM.
+        let section_a: Vec<f64> = (0..32)
+            .map(|i: usize| {
+                let mixed = (i as u64).wrapping_mul(2_654_435_761) ^ 0x9E37_79B9;
+                110.0 * 2f64.powf((mixed >> 11) as f64 % 36.0 / 12.0)
+            })
+            .collect();
+        let section_b: Vec<f64> = section_a.iter().map(|hz| hz * 2.0).collect();
+        let pitches: Vec<f64> = section_a
+            .iter()
+            .chain(&section_b)
+            .chain(&section_a)
+            .copied()
+            .collect();
+        let analysis = analyze_samples(&pitched_track(&pitches, 0.5), RATE, &config()).unwrap();
+
+        let cues = analysis.jump_cues.cues();
+        assert_eq!(
+            cues.len(),
+            2,
+            "expected the two ends of the A repeat: {cues:#?}"
+        );
+        assert!(analysis.jump_cues.validate_labels().is_ok());
+        assert_eq!(analysis.jump_cues.components().len(), 1);
+        assert!(
+            (cues[0].point - 0.0).abs() < 18.0
+                && (cues[1].point - cues[0].point - 32.0).abs() < 3.0,
+            "cues at {} and {} do not describe a 32s repeat",
+            cues[0].point,
+            cues[1].point
+        );
+    }
+
+    #[test]
+    fn a_track_with_nothing_that_repeats_has_no_jump_cues() {
+        let analysis = analyze_samples(&click_track(128.0, 30.0), RATE, &config()).unwrap();
+        // Every beat of a click track is the same beat, so no stretch of it is
+        // a repeat of any other in particular.
+        assert!(analysis.jump_cues.is_empty());
+        assert!(analysis.jump_cues.links().is_empty());
     }
 
     #[test]

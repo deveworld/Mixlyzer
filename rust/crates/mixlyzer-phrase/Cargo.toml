@@ -1,0 +1,18 @@
+[package]
+name = "mixlyzer-phrase"
+description = "Two-stage gradient-boosted song-structure (phrase) detection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+mixlyzer-core = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+rustfft = "6"
+flate2 = "1"
+
+[dev-dependencies]
+serde_json = { workspace = true }

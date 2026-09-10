@@ -627,7 +627,11 @@ mod tests {
         let signal: Vec<f64> = (0..4000)
             .map(|i| {
                 let phase = (i as f64 / period_frames).fract();
-                if phase < 0.05 { 1.0 } else { 0.0 }
+                if phase < 0.05 {
+                    1.0
+                } else {
+                    0.0
+                }
             })
             .collect();
         let on_grid = fold_score(&signal, frame_dur, 128.0, 0.15);

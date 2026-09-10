@@ -170,7 +170,6 @@ fn mel_spectrogram(
     hop: usize,
     options: &OnsetOptions,
 ) -> Vec<Vec<f64>> {
-    let window = hann_window(n_fft);
     let filters = mel_filterbank(
         options.n_mels,
         n_fft,
@@ -178,6 +177,31 @@ fn mel_spectrogram(
         options.fmin,
         options.fmax,
     );
+    mel_power_spectrogram(signal, n_fft, hop, &filters)
+        .into_iter()
+        .map(|row| {
+            // Log compression: without it, one loud bass note swamps every
+            // other band and the flux tracks that note instead of the rhythm.
+            row.into_iter().map(|energy| (1.0 + energy).ln()).collect()
+        })
+        .collect()
+}
+
+/// Mel-band power per frame, indexed `[frame][band]`.
+///
+/// Split out from [`mel_spectrogram`] because JumpCUE detection needs the
+/// linear power: it pools power within a beat before compressing, and pooling
+/// already-compressed values would weight loud beats differently.
+pub(crate) fn mel_power_spectrogram(
+    signal: &[f32],
+    n_fft: usize,
+    hop: usize,
+    filters: &[Vec<(usize, f64)>],
+) -> Vec<Vec<f64>> {
+    if signal.len() < n_fft || hop == 0 {
+        return Vec::new();
+    }
+    let window = hann_window(n_fft);
 
     let mut planner = FftPlanner::<f64>::new();
     let fft: Arc<dyn Fft<f64>> = planner.plan_fft_forward(n_fft);
@@ -197,16 +221,13 @@ fn mel_spectrogram(
         for (bin, slot) in power.iter_mut().enumerate() {
             *slot = scratch[bin].norm_sqr();
         }
-        // Log compression: without it, one loud bass note swamps every other
-        // band and the flux tracks that note instead of the rhythm.
         let row = filters
             .iter()
             .map(|weights| {
-                let energy: f64 = weights
+                weights
                     .iter()
                     .map(|(bin, weight)| power[*bin] * weight)
-                    .sum();
-                (1.0 + energy).ln()
+                    .sum()
             })
             .collect();
         out.push(row);
@@ -244,7 +265,7 @@ fn hann_window(size: usize) -> Vec<f64> {
 }
 
 /// Triangular mel filters as `(bin, weight)` pairs, one list per band.
-fn mel_filterbank(
+pub(crate) fn mel_filterbank(
     n_mels: usize,
     n_fft: usize,
     sample_rate: f64,
@@ -360,7 +381,11 @@ mod tests {
                 peaks.push(i);
             }
         }
-        assert!(peaks.len() >= 4, "expected several peaks, found {}", peaks.len());
+        assert!(
+            peaks.len() >= 4,
+            "expected several peaks, found {}",
+            peaks.len()
+        );
         for pair in peaks.windows(2) {
             let gap = (pair[1] - pair[0]) as f64;
             assert!(

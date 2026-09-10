@@ -16,16 +16,18 @@
 
 pub mod decode;
 pub mod envelope;
-pub mod key;
 pub mod error;
+pub mod jumpcue_detect;
+pub mod key;
 pub mod onset;
 pub mod pipeline;
 pub mod tempo;
 
 pub use decode::{decode_file, decode_for_analysis, Audio};
 pub use envelope::{Band, Envelopes};
-pub use key::{Chroma, ChromaOptions, KeyOptions};
 pub use error::{AnalysisError, DecodeError};
+pub use jumpcue_detect::{JumpCueOptions, SimilarLink};
+pub use key::{Chroma, ChromaOptions, KeyOptions};
 pub use onset::{OnsetEnvelope, OnsetOptions};
 pub use pipeline::{analyze_file, analyze_samples, Analysis};
 pub use tempo::{TempoEstimate, TempoOptions};

@@ -68,6 +68,21 @@ pub fn analysis_text(path: &Path, analysis: &Analysis) -> String {
         ));
     }
 
+    let cues = analysis.jump_cues.cues();
+    if !cues.is_empty() {
+        out.push_str(&format!("\njump cues ({})\n", cues.len()));
+        for cue in cues {
+            out.push_str(&format!(
+                "  {}  {:>8} - {:<8}  jump at {:>8}  pair {}\n",
+                cue.label,
+                format_duration(cue.start),
+                format_duration(cue.end),
+                format_duration(cue.point),
+                cue.component + 1
+            ));
+        }
+    }
+
     if !analysis.key_segments.is_empty() {
         out.push_str(&format!("\nkey segments ({})\n", analysis.key_segments.len()));
         // A long track can hold dozens; the first few show the shape.
@@ -110,6 +125,13 @@ pub fn analysis_json(path: &Path, analysis: &Analysis) -> String {
             "bpm": s.bpm,
             "inizio": s.inizio,
             "time_signature": s.time_signature,
+        })).collect::<Vec<_>>(),
+        "jump_cues": analysis.jump_cues.cues().iter().map(|c| json!({
+            "label": c.label,
+            "start": c.start,
+            "end": c.end,
+            "point": c.point,
+            "component": c.component,
         })).collect::<Vec<_>>(),
         "key_segments": analysis.key_segments.iter().map(|s| json!({
             "start": s.start,

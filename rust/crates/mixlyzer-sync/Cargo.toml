@@ -1,0 +1,28 @@
+[package]
+name = "mixlyzer-sync"
+description = "External DJ deck sync: pointer chains, memory value specs, deck selection, and a Windows process-memory backend"
+version.workspace = true
+edition.workspace = true
+# The portable core builds on the workspace MSRV. The Windows backend
+# additionally needs 1.82, which is what `windows` 0.62 requires; that
+# dependency is only compiled when the target is Windows.
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+mixlyzer-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+uuid = { workspace = true }

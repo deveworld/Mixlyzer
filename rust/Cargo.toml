@@ -5,7 +5,11 @@ members = [
     "crates/mixlyzer-dsp",
     "crates/mixlyzer-store",
     "crates/mixlyzer-export",
+    "crates/mixlyzer-sync",
+    "crates/mixlyzer-ui",
+    "crates/mixlyzer-app",
     "crates/mixlyzer-cli",
+    "crates/mixlyzer-phrase",
 ]
 
 [workspace.package]
@@ -20,6 +24,9 @@ mixlyzer-core = { path = "crates/mixlyzer-core" }
 mixlyzer-dsp = { path = "crates/mixlyzer-dsp" }
 mixlyzer-store = { path = "crates/mixlyzer-store" }
 mixlyzer-export = { path = "crates/mixlyzer-export" }
+mixlyzer-sync = { path = "crates/mixlyzer-sync" }
+mixlyzer-ui = { path = "crates/mixlyzer-ui" }
+mixlyzer-phrase = { path = "crates/mixlyzer-phrase" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

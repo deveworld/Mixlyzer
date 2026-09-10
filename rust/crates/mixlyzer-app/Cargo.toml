@@ -1,0 +1,23 @@
+[package]
+name = "mixlyzer-app"
+description = "The Mixlyzer desktop application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "mixlyzer-app"
+path = "src/main.rs"
+
+[dependencies]
+mixlyzer-core = { workspace = true }
+mixlyzer-dsp = { workspace = true }
+mixlyzer-store = { workspace = true }
+mixlyzer-ui = { workspace = true }
+eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.35"
+
+[dev-dependencies]
+image = "0.25.6"
