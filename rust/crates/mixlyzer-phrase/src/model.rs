@@ -127,6 +127,23 @@ pub struct PhraseModel {
 }
 
 impl PhraseModel {
+    /// Load the shipped weights, searching upwards from the current directory.
+    ///
+    /// Convenience for callers that run inside the repository or an install
+    /// laid out the same way. Anything else should name the path explicitly
+    /// with [`Self::load`] rather than depending on the process's cwd.
+    pub fn load_default() -> Result<Self, PhraseError> {
+        let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let path = find_default_model(&start).ok_or_else(|| PhraseError::ModelIo {
+            path: format!("{}/{DEFAULT_MODEL_RELATIVE_PATH}", start.display()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "not found in this directory or any parent",
+            ),
+        })?;
+        Self::load(path)
+    }
+
     /// Read a model from a `.npz` on disk.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, PhraseError> {
         let path = path.as_ref();
@@ -259,6 +276,18 @@ mod tests {
         let err = PhraseModel::load("/nonexistent/phrase_analyzer.npz").unwrap_err();
         assert!(matches!(err, PhraseError::ModelIo { .. }));
         assert!(err.to_string().contains("/nonexistent/phrase_analyzer.npz"));
+    }
+
+    #[test]
+    fn the_default_model_is_found_from_inside_the_repository() {
+        let path = find_default_model(env!("CARGO_MANIFEST_DIR")).expect("shipped weights");
+        assert!(path.ends_with(DEFAULT_MODEL_RELATIVE_PATH));
+        assert!(PhraseModel::load(path).is_ok());
+    }
+
+    #[test]
+    fn searching_for_the_default_model_outside_the_tree_finds_nothing() {
+        assert!(find_default_model("/").is_none());
     }
 
     #[test]

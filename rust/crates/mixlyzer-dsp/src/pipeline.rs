@@ -8,9 +8,12 @@
 
 use mixlyzer_core::beatgrid::Beatgrid;
 use mixlyzer_core::config::AnalysisConfig;
+use mixlyzer_core::cue::{self, CuePoint};
 use mixlyzer_core::jumpcue::JumpCueGraph;
 use mixlyzer_core::key::Key;
+use mixlyzer_core::phrase::Phrase;
 use mixlyzer_core::segments::{KeySegment, TempoSegment};
+use mixlyzer_phrase::{PhraseModel, PhraseOptions};
 
 use crate::envelope::{self, Band, Envelopes};
 use crate::error::AnalysisError;
@@ -38,6 +41,14 @@ pub struct Analysis {
     pub beat_confidence: f64,
     /// Regions of the track that sound alike, and the jumps between them.
     pub jump_cues: JumpCueGraph,
+    /// The song structure: where the intro ends, where the chorus starts.
+    ///
+    /// Empty when no phrase model was supplied. It is never empty *because*
+    /// detection failed — that is [`AnalysisError::Phrase`].
+    pub phrases: Vec<Phrase>,
+    /// Cue points derived from the phrases, so they are empty for the same
+    /// reason the phrases are.
+    pub cue_points: Vec<CuePoint>,
 }
 
 impl Analysis {
@@ -55,17 +66,73 @@ impl Analysis {
     }
 }
 
+/// The stages that need something the config cannot supply.
+///
+/// The musical description — beats, tempo, key, envelopes, jump cues — needs
+/// only the audio and the settings. Phrase detection additionally needs a
+/// trained model, which is a file on disk rather than a number in
+/// `config.json`, so it is passed here instead.
+#[derive(Debug, Clone, Default)]
+pub struct AnalysisOptions {
+    /// Weights for the phrase detector.
+    ///
+    /// `None` runs every other stage and reports no phrases. That is the
+    /// default because a build without the weights beside it should still
+    /// analyse tempo and key rather than refuse the track outright.
+    pub phrase_model: Option<PhraseModel>,
+}
+
+impl AnalysisOptions {
+    /// Options that run the phrase stage with `model`.
+    pub fn with_phrase_model(model: PhraseModel) -> Self {
+        Self {
+            phrase_model: Some(model),
+        }
+    }
+
+    /// Options that look for the shipped weights beside the running binary and
+    /// in each parent directory, and run the phrase stage if they are there.
+    ///
+    /// Absent weights are not an error here: the search is a convenience, and
+    /// a caller that requires phrases should load the model itself so a
+    /// missing file is reported as one.
+    pub fn discovering_phrase_model() -> Self {
+        let found = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+            .and_then(mixlyzer_phrase::find_default_model)
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .and_then(mixlyzer_phrase::find_default_model)
+            });
+        Self {
+            phrase_model: found.and_then(|path| PhraseModel::load(path).ok()),
+        }
+    }
+}
+
 /// Shortest track the tempo stage can say anything useful about.
 ///
 /// Below a few seconds there is not enough of the onset envelope to
 /// autocorrelate: the estimate would be an artefact of the window, not a tempo.
 const MIN_ANALYSIS_SECONDS: f64 = 4.0;
 
-/// Analyse already-decoded mono samples.
+/// Analyse already-decoded mono samples, without the phrase stage.
 pub fn analyze_samples(
     samples: &[f32],
     sample_rate: u32,
     config: &AnalysisConfig,
+) -> Result<Analysis, AnalysisError> {
+    analyze_samples_with(samples, sample_rate, config, &AnalysisOptions::default())
+}
+
+/// Analyse already-decoded mono samples, running the stages `options` enables.
+pub fn analyze_samples_with(
+    samples: &[f32],
+    sample_rate: u32,
+    config: &AnalysisConfig,
+    options: &AnalysisOptions,
 ) -> Result<Analysis, AnalysisError> {
     let duration_sec = if sample_rate == 0 {
         0.0
@@ -152,6 +219,12 @@ pub fn analyze_samples(
         JumpCueOptions::default(),
     )?;
 
+    let phrases = match &options.phrase_model {
+        Some(model) => detect_phrases(samples, sample_rate, &beatgrid, model)?,
+        None => Vec::new(),
+    };
+    let cue_points = cue::from_phrases(&phrases);
+
     Ok(Analysis {
         duration_sec,
         analysis_sample_rate: sample_rate,
@@ -162,17 +235,59 @@ pub fn analyze_samples(
         envelopes,
         beat_confidence,
         jump_cues,
+        phrases,
+        cue_points,
     })
 }
 
-/// Decode a file and analyse it.
+/// Run the phrase detector at the rate its model was trained on.
+///
+/// The detector refuses audio at any other rate rather than resample it
+/// itself, because the models split on raw feature values and a resampler that
+/// is merely close moves every one of them. Resampling belongs here, where the
+/// same band-limited kernel the decoder uses is already available.
+fn detect_phrases(
+    samples: &[f32],
+    sample_rate: u32,
+    beatgrid: &Beatgrid,
+    model: &PhraseModel,
+) -> Result<Vec<Phrase>, AnalysisError> {
+    let wanted = model.settings.sample_rate;
+    let resampled;
+    let audio = if sample_rate == wanted {
+        samples
+    } else {
+        resampled = crate::decode::resample(samples, sample_rate, wanted);
+        &resampled
+    };
+
+    let options = PhraseOptions::new(model.clone());
+    Ok(mixlyzer_phrase::detect_phrases(
+        audio,
+        wanted,
+        beatgrid.beats(),
+        beatgrid.segments(),
+        &options,
+    )?)
+}
+
+/// Decode a file and analyse it, without the phrase stage.
 pub fn analyze_file(
     path: impl AsRef<std::path::Path>,
     config: &AnalysisConfig,
 ) -> Result<Analysis, AnalysisError> {
+    analyze_file_with(path, config, &AnalysisOptions::default())
+}
+
+/// Decode a file and analyse it, running the stages `options` enables.
+pub fn analyze_file_with(
+    path: impl AsRef<std::path::Path>,
+    config: &AnalysisConfig,
+    options: &AnalysisOptions,
+) -> Result<Analysis, AnalysisError> {
     let rate = config.analysis_samp_rate;
     let samples = crate::decode::decode_for_analysis(path, rate)?;
-    analyze_samples(&samples, rate, config)
+    analyze_samples_with(&samples, rate, config, options)
 }
 
 /// Lay beats across every segment, each from its own downbeat at its own tempo.
@@ -252,6 +367,79 @@ mod tests {
             beat += 1;
         }
         signal
+    }
+
+    /// The shipped weights, or `None` on a checkout without the assets.
+    fn phrase_model() -> Option<PhraseModel> {
+        mixlyzer_phrase::find_default_model(env!("CARGO_MANIFEST_DIR"))
+            .and_then(|path| PhraseModel::load(path).ok())
+    }
+
+    #[test]
+    fn without_a_model_the_phrase_stage_is_skipped_rather_than_failing() {
+        let analysis = analyze_samples(&click_track(128.0, 30.0), RATE, &config()).unwrap();
+        assert!(analysis.phrases.is_empty());
+        assert!(analysis.cue_points.is_empty());
+    }
+
+    #[test]
+    fn a_model_makes_the_analysis_report_a_structure() {
+        let Some(model) = phrase_model() else { return };
+        let options = AnalysisOptions::with_phrase_model(model);
+        let analysis =
+            analyze_samples_with(&click_track(128.0, 60.0), RATE, &config(), &options).unwrap();
+
+        assert!(!analysis.phrases.is_empty(), "no phrases on a 60s track");
+        // Phrases tile the track in order, without gaps or overlaps.
+        for pair in analysis.phrases.windows(2) {
+            assert!(pair[0].end <= pair[1].start + 1e-9, "{pair:?} overlap");
+        }
+        for phrase in &analysis.phrases {
+            assert!(phrase.start < phrase.end);
+            assert!(phrase.end <= analysis.duration_sec + 1.0);
+            assert!(!phrase.label.is_empty());
+        }
+    }
+
+    #[test]
+    fn cue_points_follow_from_the_phrases_the_same_run_found() {
+        let Some(model) = phrase_model() else { return };
+        let options = AnalysisOptions::with_phrase_model(model);
+        let analysis =
+            analyze_samples_with(&click_track(128.0, 60.0), RATE, &config(), &options).unwrap();
+        assert_eq!(analysis.cue_points, cue::from_phrases(&analysis.phrases));
+    }
+
+    #[test]
+    fn an_analysis_rate_the_model_was_not_trained_on_is_resampled_not_refused() {
+        let Some(model) = phrase_model() else { return };
+        let rate = 44_100;
+        let config = AnalysisConfig {
+            analysis_samp_rate: rate,
+            ..AnalysisConfig::default()
+        };
+        let n = (60.0 * f64::from(rate)) as usize;
+        let period = 60.0 / 128.0 * f64::from(rate);
+        let mut signal = vec![0.0f32; n];
+        let mut beat = 0usize;
+        loop {
+            let at = (beat as f64 * period).round() as usize;
+            if at >= n {
+                break;
+            }
+            for offset in 0..256.min(n - at) {
+                let decay = (1.0 - offset as f32 / 256.0).powi(2);
+                signal[at + offset] = decay * if (at + offset) % 3 == 0 { 1.0 } else { -0.7 };
+            }
+            beat += 1;
+        }
+
+        let options = AnalysisOptions::with_phrase_model(model);
+        // The detector itself refuses a rate it was not trained on; reaching a
+        // result here is the evidence that the pipeline resampled for it.
+        let analysis = analyze_samples_with(&signal, rate, &config, &options).unwrap();
+        assert_eq!(analysis.analysis_sample_rate, rate);
+        assert!(!analysis.phrases.is_empty());
     }
 
     #[test]

@@ -27,16 +27,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = args.next().unwrap_or_else(|| "track.png".into());
     let at: f64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(30.0);
 
-    let analysis = pipeline::analyze_file(&input, &AnalysisConfig::default())?;
+    let options = pipeline::AnalysisOptions::discovering_phrase_model();
+    let analysis = pipeline::analyze_file_with(&input, &AnalysisConfig::default(), &options)?;
     println!(
-        "{input}: {:.2} BPM, {}, {} beats, {} jump cues",
+        "{input}: {:.2} BPM, {}, {} beats, {} jump cues, {} phrases",
         analysis.tempo_global,
         analysis
             .overall_key
             .map(|k| k.display())
             .unwrap_or_else(|| "unknown key".into()),
         analysis.beats().len(),
-        analysis.jump_cues.cues().len()
+        analysis.jump_cues.cues().len(),
+        analysis.phrases.len()
     );
 
     let scene = TrackScene {
@@ -48,8 +50,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         beatgrid: analysis.beatgrid.clone(),
         key_segments: analysis.key_segments.clone(),
-        phrases: Vec::new(),
-        cue_points: Vec::new(),
+        phrases: analysis.phrases.clone(),
+        cue_points: analysis.cue_points.clone(),
         jump_cues: analysis.jump_cues.cues().to_vec(),
         selection: None,
     };

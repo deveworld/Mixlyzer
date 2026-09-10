@@ -67,6 +67,23 @@ fn load_config(args: &Args) -> Result<Config> {
         .with_context(|| format!("reading {}", args.config.display()))
 }
 
+/// The phrase detector options for this invocation.
+///
+/// An explicitly named model that cannot be read is an error: the user asked
+/// for phrases by naming it. Without `--phrase-model` the weights are merely
+/// looked for, and a build that does not ship them still analyses tempo and
+/// key.
+fn analysis_options(args: &Args) -> Result<pipeline::AnalysisOptions> {
+    match &args.phrase_model {
+        Some(path) => {
+            let model = mixlyzer_dsp::PhraseModel::load(path)
+                .with_context(|| format!("loading the phrase model {}", path.display()))?;
+            Ok(pipeline::AnalysisOptions::with_phrase_model(model))
+        }
+        None => Ok(pipeline::AnalysisOptions::discovering_phrase_model()),
+    }
+}
+
 /// The library directory: the `--library` override, or the configured path.
 ///
 /// Creating it is a step that can fail on its own, so a bad path produces a
@@ -94,7 +111,7 @@ fn open_library(args: &Args, config: &Config) -> Result<(Library, FeatureStore, 
 
 fn analyze(args: &Args, path: &Path, json: bool) -> Result<()> {
     let config = load_config(args)?;
-    let analysis = pipeline::analyze_file(path, &config.analysisconfig)
+    let analysis = pipeline::analyze_file_with(path, &config.analysisconfig, &analysis_options(args)?)
         .with_context(|| format!("analysing {}", path.display()))?;
     if json {
         println!("{}", render::analysis_json(path, &analysis));
@@ -121,7 +138,7 @@ fn add(args: &Args, path: &Path, force: bool) -> Result<()> {
         }
     }
 
-    let analysis = pipeline::analyze_file(path, &config.analysisconfig)
+    let analysis = pipeline::analyze_file_with(path, &config.analysisconfig, &analysis_options(args)?)
         .with_context(|| format!("analysing {}", path.display()))?;
 
     // Keep the uid of an existing row so its stored features stay linked.
@@ -164,6 +181,8 @@ fn add(args: &Args, path: &Path, force: bool) -> Result<()> {
     file.set_beats_time_sec(analysis.beats());
     file.set_tempo_segments(analysis.tempo_segments());
     file.set_key_segments(&analysis.key_segments);
+    file.set_phrases(&analysis.phrases);
+    file.set_cue_points(&analysis.cue_points);
     features
         .save(&uid, &file)
         .context("writing the analysis features")?;

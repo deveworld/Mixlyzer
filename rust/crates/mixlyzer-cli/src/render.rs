@@ -83,6 +83,30 @@ pub fn analysis_text(path: &Path, analysis: &Analysis) -> String {
         }
     }
 
+    if !analysis.phrases.is_empty() {
+        out.push_str(&format!("\nphrases ({})\n", analysis.phrases.len()));
+        for phrase in &analysis.phrases {
+            out.push_str(&format!(
+                "  {:>8} - {:<8}  {}\n",
+                format_duration(phrase.start),
+                format_duration(phrase.end),
+                phrase.label
+            ));
+        }
+    }
+
+    if !analysis.cue_points.is_empty() {
+        out.push_str(&format!("\ncue points ({})\n", analysis.cue_points.len()));
+        for cue in &analysis.cue_points {
+            out.push_str(&format!(
+                "  {:>2}  {:>8}  {}\n",
+                cue.id,
+                format_duration(cue.time_sec),
+                cue.label
+            ));
+        }
+    }
+
     if !analysis.key_segments.is_empty() {
         out.push_str(&format!("\nkey segments ({})\n", analysis.key_segments.len()));
         // A long track can hold dozens; the first few show the shape.
@@ -132,6 +156,17 @@ pub fn analysis_json(path: &Path, analysis: &Analysis) -> String {
             "end": c.end,
             "point": c.point,
             "component": c.component,
+        })).collect::<Vec<_>>(),
+        "phrases": analysis.phrases.iter().map(|p| json!({
+            "start": p.start,
+            "end": p.end,
+            "label": p.label,
+        })).collect::<Vec<_>>(),
+        "cue_points": analysis.cue_points.iter().map(|c| json!({
+            "id": c.id,
+            "time_sec": c.time_sec,
+            "label": c.label,
+            "comment": c.comment,
         })).collect::<Vec<_>>(),
         "key_segments": analysis.key_segments.iter().map(|s| json!({
             "start": s.start,

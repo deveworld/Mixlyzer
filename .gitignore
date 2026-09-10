@@ -42,5 +42,7 @@ config.json
 annotator/
 benchmark/
 
-# Rust build artifacts
-rust/target/
+# Rust build artifacts. Unanchored, so a target/ that cargo creates inside a
+# single crate (running it from that directory rather than the workspace root)
+# is ignored too, not just the workspace one.
+target/

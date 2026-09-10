@@ -32,6 +32,12 @@ pub struct Args {
     pub config: PathBuf,
     /// Overrides the library path from the config file.
     pub library: Option<PathBuf>,
+    /// Phrase detector weights.
+    ///
+    /// `None` looks for the shipped `.npz` beside the binary and in each
+    /// parent directory. Naming one explicitly makes a missing file an error
+    /// instead of a track that quietly comes back with no structure.
+    pub phrase_model: Option<PathBuf>,
 }
 
 /// Why the command line could not be understood.
@@ -51,7 +57,7 @@ pub enum ArgError {
 }
 
 const USAGE: &str = "\
-mixlyzer - analyse DJ tracks: beatgrid, tempo, key
+mixlyzer - analyse DJ tracks: beatgrid, tempo, key, song structure
 
 USAGE:
     mixlyzer <command> [options]
@@ -69,6 +75,9 @@ COMMANDS:
 GLOBAL OPTIONS:
     --config <path>                Config file (default: ./config.json)
     --library <path>               Library directory, overriding the config
+    --phrase-model <path>          Phrase detector weights (.npz). Without it
+                                   the weights are looked for beside the binary
+                                   and phrases are skipped if absent.
 ";
 
 /// The usage text, for `help` and for errors.
@@ -80,6 +89,7 @@ pub fn usage() -> &'static str {
 pub fn parse(argv: &[String]) -> Result<Args, ArgError> {
     let mut config = PathBuf::from("config.json");
     let mut library: Option<PathBuf> = None;
+    let mut phrase_model: Option<PathBuf> = None;
     let mut rest: Vec<String> = Vec::new();
 
     // Global options can appear anywhere, so pull them out first.
@@ -100,6 +110,13 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgError> {
                         .ok_or(ArgError::MissingValue("--library", "a path"))?,
                 ));
             }
+            "--phrase-model" => {
+                index += 1;
+                phrase_model = Some(PathBuf::from(
+                    argv.get(index)
+                        .ok_or(ArgError::MissingValue("--phrase-model", "a path"))?,
+                ));
+            }
             other => rest.push(other.to_string()),
         }
         index += 1;
@@ -110,6 +127,7 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgError> {
             command: Command::Help,
             config,
             library,
+            phrase_model,
         });
     };
 
@@ -204,6 +222,7 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgError> {
         command,
         config,
         library,
+        phrase_model,
     })
 }
 

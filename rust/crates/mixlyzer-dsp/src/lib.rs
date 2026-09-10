@@ -23,11 +23,15 @@ pub mod onset;
 pub mod pipeline;
 pub mod tempo;
 
-pub use decode::{decode_file, decode_for_analysis, Audio};
+pub use decode::{decode_file, decode_for_analysis, resample, Audio};
 pub use envelope::{Band, Envelopes};
 pub use error::{AnalysisError, DecodeError};
 pub use jumpcue_detect::{JumpCueOptions, SimilarLink};
 pub use key::{Chroma, ChromaOptions, KeyOptions};
 pub use onset::{OnsetEnvelope, OnsetOptions};
-pub use pipeline::{analyze_file, analyze_samples, Analysis};
+pub use mixlyzer_phrase::{PhraseError, PhraseModel};
+pub use pipeline::{
+    analyze_file, analyze_file_with, analyze_samples, analyze_samples_with, Analysis,
+    AnalysisOptions,
+};
 pub use tempo::{TempoEstimate, TempoOptions};

@@ -41,8 +41,11 @@ pub fn spawn(ctx: egui::Context) -> (Sender<AnalysisRequest>, Receiver<AnalysisR
     std::thread::Builder::new()
         .name("analysis".into())
         .spawn(move || {
+            // The weights are parsed once and reused: the search and the
+            // 400 KB parse would otherwise repeat for every track.
+            let options = pipeline::AnalysisOptions::discovering_phrase_model();
             while let Ok(request) = request_rx.recv() {
-                let outcome = run(&request);
+                let outcome = run(&request, &options);
                 if result_tx.send(outcome).is_err() {
                     break;
                 }
@@ -55,8 +58,12 @@ pub fn spawn(ctx: egui::Context) -> (Sender<AnalysisRequest>, Receiver<AnalysisR
 }
 
 /// Analyse one file into something the views can draw.
-fn run(request: &AnalysisRequest) -> AnalysisResult {
-    let analysis = match pipeline::analyze_file(&request.path, &request.config.analysisconfig) {
+fn run(request: &AnalysisRequest, options: &pipeline::AnalysisOptions) -> AnalysisResult {
+    let analysis = match pipeline::analyze_file_with(
+        &request.path,
+        &request.config.analysisconfig,
+        options,
+    ) {
         Ok(analysis) => analysis,
         Err(err) => {
             return AnalysisResult::Failed {
@@ -85,8 +92,8 @@ fn run(request: &AnalysisRequest) -> AnalysisResult {
         ),
         beatgrid: analysis.beatgrid.clone(),
         key_segments: analysis.key_segments.clone(),
-        phrases: Vec::new(),
-        cue_points: Vec::new(),
+        phrases: analysis.phrases.clone(),
+        cue_points: analysis.cue_points.clone(),
         jump_cues: analysis.jump_cues.cues().to_vec(),
         selection: None,
     };
@@ -143,6 +150,8 @@ fn persist(
     features.set_beats_time_sec(analysis.beats());
     features.set_tempo_segments(analysis.tempo_segments());
     features.set_key_segments(&analysis.key_segments);
+    features.set_phrases(&analysis.phrases);
+    features.set_cue_points(&analysis.cue_points);
     FeatureStore::new(&dir)
         .save(&uid, &features)
         .map_err(|err| err.to_string())?;
@@ -172,7 +181,7 @@ mod tests {
             path: PathBuf::from("/nonexistent/track.flac"),
             config: Config::default(),
         };
-        match run(&request) {
+        match run(&request, &pipeline::AnalysisOptions::default()) {
             AnalysisResult::Failed { path, message } => {
                 assert_eq!(path, PathBuf::from("/nonexistent/track.flac"));
                 assert!(!message.is_empty());

@@ -241,6 +241,17 @@ pub fn decode_for_analysis(
 const SINC_HALF_WIDTH: isize = 16;
 
 /// Band-limited resampling with a Blackman-windowed sinc kernel.
+///
+/// Returns `input` unchanged when the rates already match, so a caller can ask
+/// for a rate without first checking whether it has one.
+pub fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || from_rate == 0 || to_rate == 0 {
+        return input.to_vec();
+    }
+    resample_sinc(input, from_rate, to_rate)
+}
+
+/// Band-limited resampling with a Blackman-windowed sinc kernel.
 fn resample_sinc(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if input.is_empty() {
         return Vec::new();

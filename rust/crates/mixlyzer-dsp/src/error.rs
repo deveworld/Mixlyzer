@@ -49,4 +49,12 @@ pub enum AnalysisError {
 
     #[error("tempo search range {lo}-{hi} BPM is too narrow at hop {hop} to hold a candidate")]
     TempoRangeTooNarrow { lo: f64, hi: f64, hop: usize },
+
+    /// The phrase stage was asked for and could not run.
+    ///
+    /// Analysis reaches this only when a model was supplied, so an empty
+    /// phrase list always means "no model", never "the detector failed
+    /// quietly".
+    #[error("phrase detection failed: {0}")]
+    Phrase(#[from] mixlyzer_phrase::PhraseError),
 }

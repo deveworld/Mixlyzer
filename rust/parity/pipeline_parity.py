@@ -50,13 +50,16 @@ TOLERANCE = {
 }
 
 
-def rust_dump() -> dict:
+VARIANTS = ("regular", "irregular")
+
+
+def rust_dump(variant: str) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "pipeline.json"
         subprocess.run(
             [
                 "cargo", "run", "-q", "--release", "-p", "mixlyzer-phrase",
-                "--example", "parity_pipeline", "--", str(out),
+                "--example", "parity_pipeline", "--", str(out), variant,
             ],
             cwd=REPO / "rust",
             check=True,
@@ -118,6 +121,18 @@ def python_stages(dump: dict) -> dict[str, np.ndarray]:
         shift_penalty=float(settings.get("boundary_shift_penalty", 0.015)),
         downbeat_bonus=float(settings.get("boundary_downbeat_bonus", 0.35)),
     )
+    probe_refined = pa._refine_boundaries(
+        np.asarray(dump["probe_raw"], dtype=np.int32),
+        np.asarray(dump["probe_probability"], dtype=np.float64),
+        np.asarray(dump["probe_valid"], dtype=bool),
+        np.asarray(dump["probe_downbeats"], dtype=bool),
+        window_beats=int(settings.get("boundary_refine_window_beats", 8)),
+        target_lengths_beats=settings.get("boundary_lengths_beats", (16, 32, 64, 128)),
+        length_weight=float(settings.get("boundary_length_weight", 0.45)),
+        shift_penalty=float(settings.get("boundary_shift_penalty", 0.015)),
+        downbeat_bonus=float(settings.get("boundary_downbeat_bonus", 0.35)),
+    )
+
     segment_features = pa._segment_features(feature_z, refined)
     log_probability = pa._label_logp(artifact["label_clf"], feature_z, refined)
     labels = pa._decode_labels(
@@ -147,6 +162,7 @@ def python_stages(dump: dict) -> dict[str, np.ndarray]:
         "boundary_probability": probability,
         "raw_bounds": raw_bounds,
         "refined_bounds": refined,
+        "probe_refined": probe_refined,
         "segment_features": segment_features,
         "label_log_probability": log_probability,
         "labels": labels,
@@ -172,9 +188,18 @@ def compare(name: str, rust: np.ndarray, expected: np.ndarray) -> tuple[bool, st
 
 
 def main() -> int:
-    dump = rust_dump()
+    failures = 0
+    for variant in VARIANTS:
+        failures += check(variant)
+    print(f"\n{failures} stage(s) outside tolerance")
+    return 1 if failures else 0
+
+
+def check(variant: str) -> int:
+    dump = rust_dump(variant)
     expected = python_stages(dump)
     failures = 0
+    print(f"\n######## signal: {variant} ########")
 
     def report(ok: bool, name: str, detail: str) -> None:
         nonlocal failures
@@ -200,6 +225,17 @@ def main() -> int:
         report(ok, name, detail)
 
     print("=== decisions (must be exact) ===")
+    probe_raw = [int(v) for v in dump["probe_raw"]]
+    probe_got = [int(v) for v in dump["probe_refined"]]
+    probe_want = [int(v) for v in expected["probe_refined"]]
+    report(
+        probe_got == probe_want,
+        "probe_refined",
+        f"rust={probe_got} python={probe_want} (from {probe_raw})",
+    )
+    if probe_got == probe_raw:
+        print("  WARN probe_refined            the DP left every boundary alone; "
+              "this case is not exercising it")
     for name in ("raw_bounds", "refined_bounds"):
         got = [int(v) for v in dump[name]]
         want = [int(v) for v in expected[name]]
@@ -212,9 +248,7 @@ def main() -> int:
     default_labels = list(dump["labels_default_options"])
     note = "same as Python here" if default_labels == want_labels else "differs from Python"
     print(f"  note end_state_weight=0    {default_labels} ({note})")
-
-    print(f"\n{failures} stage(s) outside tolerance")
-    return 1 if failures else 0
+    return failures
 
 
 if __name__ == "__main__":

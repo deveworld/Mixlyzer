@@ -8,7 +8,9 @@ command-line front end.
 mixlyzer-core     domain types and pure logic: beatgrid, key, phrases,
                   cue points, JumpCUEs, configuration
 mixlyzer-dsp      decoding and analysis: envelopes, onsets, tempo, key,
-                  JumpCUE detection
+                  JumpCUE detection, and the stage order
+mixlyzer-phrase   song structure: beat-level features and the two
+                  gradient-boosted models over them
 mixlyzer-store    SQLite library, feature files, schema migrations
 mixlyzer-export   Rekordbox XML
 mixlyzer-sync     following an external deck through its process memory
@@ -21,7 +23,7 @@ mixlyzer-cli      the `mixlyzer` binary
 
 ```sh
 cd rust
-cargo test --workspace       # 654 tests
+cargo test --workspace       # 746 tests
 cargo build --release
 ./target/release/mixlyzer analyze /path/to/track.flac
 ```
@@ -39,7 +41,10 @@ mixlyzer transitions --from <bpm> --to <bpm> [--tolerance <percent>]
 ```
 
 `--config` points at a `config.json` (the same file the desktop app uses) and
-`--library` overrides the library directory.
+`--library` overrides the library directory. `--phrase-model` names the
+detector weights; without it they are looked for beside the binary and in each
+parent directory, and a build that does not ship them still analyses tempo and
+key rather than refusing the track.
 
 ## What it does on a real file
 
@@ -49,6 +54,25 @@ A synthetic 40-second test track at 128 BPM over an A minor bed:
 tempo      128.00 BPM
 key        Am (8A)
 beats      85 (22 bars)
+```
+
+On a longer track with real sections, the same command also prints the
+structure and the cue points derived from it:
+
+```
+phrases (7)
+      0:00 - 0:10      INTRO
+      0:10 - 0:17      VERSE
+      0:17 - 0:41      VERSE
+      0:41 - 1:06      VERSE
+      1:06 - 1:13      CHORUS
+      1:13 - 1:32      CHORUS
+      1:32 - 1:40      OUTRO
+
+cue points (3)
+   0      1:06  CHORUS_IN
+   1      1:13  CHORUS_NEXT/CHORUS_PRE_OUT
+   2      1:32  CHORUS_OUT/OUTRO
 ```
 
 The same file through the Python pipeline, timed stage by stage:
@@ -70,7 +94,9 @@ chromagram, the key decode and the key segments. Both agree on 128.00 BPM.
 diffs every field:
 
 ```sh
-.venv/bin/python rust/parity/compare.py
+.venv/bin/python rust/parity/compare.py          # core logic
+.venv/bin/python rust/parity/phrase_parity.py    # the librosa features
+.venv/bin/python rust/parity/pipeline_parity.py  # the whole detector
 ```
 
 The 24 key labels and their harmonic neighbours, the database segment rows,
@@ -150,11 +176,6 @@ migrate and list correctly, but its stored analysis has to be recomputed with
 
 ## Not reimplemented
 
-- Phrase detection. The domain types, storage, editing operations, display and
-  cue-point derivation are all here; the detector itself — a pair of
-  gradient-boosted models over beat-level acoustic features — is not, because
-  it is trained on librosa's exact feature values and a port that is merely
-  close produces plausible-looking noise rather than an obvious failure.
 - The editor's undo history and the segment reanalysis workers.
 - Audio playback. The application draws the transport and moves the playhead,
   but nothing is sent to a sound device yet.
@@ -192,6 +213,57 @@ mastered to full scale still measures around 0.2 — drawn unscaled it fills a
 fifth of the view. And the strips are laid out in fractions of the view's
 height rather than in fixed pixel offsets, so they stay aligned when the window
 is resized.
+
+## Finding the song structure
+
+`mixlyzer-phrase` says where the intro ends and where the chorus starts. It is
+two gradient-boosted models over beat-level acoustic features: one scores every
+beat for how much it looks like a boundary, the other labels the segments
+between the chosen boundaries, and a dynamic program picks the labelling that
+best fits the transition and length priors. Both run the shipped
+`assets/weights/phrase_analyzer.npz` — the same artifact the Python app uses,
+read directly, with no Python in the loop.
+
+The models split on raw librosa feature values, so a feature that is *close*
+degrades the output into something that still looks like a plausible song
+structure rather than failing visibly. Every frame-rate feature is therefore a
+port of a specific librosa routine rather than a reimplementation in spirit,
+and `parity/phrase_parity.py` checks each one against librosa itself: the worst
+disagreement across all seventeen is 9.2e-05, on MFCC, and `estimate_tuning` is
+bit-exact. `parity/pipeline_parity.py` then checks everything built on top —
+the beat grid, the 1761-column boundary matrix, the per-beat probabilities, the
+segment features and the label log-probabilities — and the discrete decisions,
+the boundaries and the labels, come out identical.
+
+Two things are deliberately not the same:
+
+**The end-state prior is off by default.** The shipped transition matrix gives
+P(END | SILENCE) = 0.863 against P(END | OUTRO) = 0.0026, a 5.8 nat gap. That
+is an artifact of the training annotations, which end each track with a
+trailing silence segment; the boundary detector never emits one at inference,
+so the prior has nothing legitimate to reward and instead relabels the last
+phrase of an ordinary fade-out as SILENCE, overriding a label classifier that
+is often 80% confident otherwise. `PhraseOptions::matching_python` restores it
+for parity checking.
+
+**Resampling happens in the pipeline, not the detector.** The models were
+trained at 22.05 kHz and `detect_phrases` refuses anything else rather than
+resample it itself, for the same reason as above. `mixlyzer-dsp` does the
+conversion with the band-limited kernel the decoder already uses, so a library
+configured for 44.1 kHz analysis still gets phrases.
+
+Phrase detection needs the weights, which are a file rather than a setting, so
+it is the one stage the config cannot switch on by itself:
+
+```rust
+let options = AnalysisOptions::discovering_phrase_model();
+let analysis = pipeline::analyze_file_with(path, &config, &options)?;
+```
+
+`analyze_file` without options runs every other stage and reports no phrases.
+An empty phrase list therefore always means "no model" — a detector that ran
+and failed is `AnalysisError::Phrase`, never silence. Cue points are derived
+from whatever phrases came back, so they follow the same rule.
 
 ## Following an external deck
 

@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 mixlyzer-core = { workspace = true }
+mixlyzer-phrase = { workspace = true }
 thiserror = { workspace = true }
 rustfft = "6"
 symphonia = { version = "0.5", features = ["mp3", "aac", "alac", "flac", "isomp4", "ogg", "vorbis", "wav", "pcm"] }
